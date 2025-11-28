@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  # Redis for queue management and caching
+  redis:
+    image: redis:7-alpine
+    container_name: dryft-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - dryft-network
+    restart: unless-stopped
+
+  # Next.js Frontend
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dryft-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - TURSO_CONNECTION_URL=${TURSO_CONNECTION_URL}
+      - TURSO_AUTH_TOKEN=${TURSO_AUTH_TOKEN}
+    volumes:
+      - ./src:/app/src
+      - ./public:/app/public
+      - /app/node_modules
+      - /app/.next
+    networks:
+      - dryft-network
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Redis Queue Server
+  queue-server:
+    build:
+      context: ./services
+      dockerfile: Dockerfile
+    container_name: dryft-queue-server
+    command: python queue_server.py
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    networks:
+      - dryft-network
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Matchmaker Worker
+  matchmaker:
+    build:
+      context: ./services
+      dockerfile: Dockerfile
+    container_name: dryft-matchmaker
+    command: python matchmaker.py
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - API_BASE_URL=http://frontend:3000
+    networks:
+      - dryft-network
+    depends_on:
+      - redis
+      - frontend
+    restart: unless-stopped
+
+  # Driver/Courier Simulator
+  simulator:
+    build:
+      context: ./services
+      dockerfile: Dockerfile
+    container_name: dryft-simulator
+    command: python simulator.py
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - API_BASE_URL=http://frontend:3000
+    networks:
+      - dryft-network
+    depends_on:
+      - redis
+      - frontend
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  dryft-network:
+    driver: bridge
